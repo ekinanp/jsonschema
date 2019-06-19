@@ -124,14 +124,14 @@ func (r *Reflector) ReflectFromType(t reflect.Type) *Schema {
 		if r.AllowAdditionalProperties {
 			st.AdditionalProperties = []byte("true")
 		}
-		r.reflectStructFields(st, definitions, t)
-		r.reflectStruct(definitions, t)
+		r.reflectStructFields(st, definitions, t.Name(), t)
+		r.reflectStruct(definitions, t.Name(), t)
 		delete(definitions, t.Name())
 		return &Schema{Type: st, Definitions: definitions}
 	}
 
 	s := &Schema{
-		Type:        r.reflectTypeToSchema(definitions, t),
+		Type:        r.reflectTypeToSchema(definitions, t.Name(), t),
 		Definitions: definitions,
 	}
 	return s
@@ -160,10 +160,10 @@ type protoEnum interface {
 
 var protoEnumType = reflect.TypeOf((*protoEnum)(nil)).Elem()
 
-func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type) *Type {
+func (r *Reflector) reflectTypeToSchema(definitions Definitions, typeName string, t reflect.Type) *Type {
 	// Already added to definitions?
-	if _, ok := definitions[t.Name()]; ok {
-		return &Type{Ref: "#/definitions/" + t.Name()}
+	if _, ok := definitions[typeName]; ok {
+		return &Type{Ref: "#/definitions/" + typeName}
 	}
 
 	// jsonpb will marshal protobuf enum options as either strings or integers.
@@ -193,14 +193,14 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type)
 		case uriType: // uri RFC section 7.3.6
 			return &Type{Type: "string", Format: "uri"}
 		default:
-			return r.reflectStruct(definitions, t)
+			return r.reflectStruct(definitions, typeName, t)
 		}
 
 	case reflect.Map:
 		rt := &Type{
 			Type: "object",
 			PatternProperties: map[string]*Type{
-				".*": r.reflectTypeToSchema(definitions, t.Elem()),
+				".*": r.reflectTypeToSchema(definitions, t.Elem().Name(), t.Elem()),
 			},
 		}
 		delete(rt.PatternProperties, "additionalProperties")
@@ -219,7 +219,7 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type)
 			return returnType
 		default:
 			returnType.Type = "array"
-			returnType.Items = r.reflectTypeToSchema(definitions, t.Elem())
+			returnType.Items = r.reflectTypeToSchema(definitions, t.Elem().Name(), t.Elem())
 			return returnType
 		}
 
@@ -243,13 +243,19 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type)
 		return &Type{Type: "string"}
 
 	case reflect.Ptr:
-		return r.reflectTypeToSchema(definitions, t.Elem())
+		return r.reflectTypeToSchema(definitions, t.Elem().Name(), t.Elem())
 	}
 	panic("unsupported type " + t.String())
 }
 
+var anonStructCounter = 0
+
 // Refects a struct to a JSON Schema type.
-func (r *Reflector) reflectStruct(definitions Definitions, t reflect.Type) *Type {
+func (r *Reflector) reflectStruct(definitions Definitions, typeName string, t reflect.Type) *Type {
+	if len(typeName) <= 0 {
+		typeName = "__anonStruct__" + strconv.Itoa(anonStructCounter)
+		anonStructCounter++
+	}
 	for _, ignored := range r.IgnoredTypes {
 		if reflect.TypeOf(ignored) == t {
 			st := &Type{
@@ -257,11 +263,11 @@ func (r *Reflector) reflectStruct(definitions Definitions, t reflect.Type) *Type
 				Properties:           map[string]*Type{},
 				AdditionalProperties: []byte("true"),
 			}
-			definitions[t.Name()] = st
+			definitions[typeName] = st
 
 			return &Type{
 				Version: Version,
-				Ref:     "#/definitions/" + t.Name(),
+				Ref:     "#/definitions/" + typeName,
 			}
 
 		}
@@ -274,16 +280,16 @@ func (r *Reflector) reflectStruct(definitions Definitions, t reflect.Type) *Type
 	if r.AllowAdditionalProperties {
 		st.AdditionalProperties = []byte("true")
 	}
-	definitions[t.Name()] = st
-	r.reflectStructFields(st, definitions, t)
+	definitions[typeName] = st
+	r.reflectStructFields(st, definitions, typeName, t)
 
 	return &Type{
 		Version: Version,
-		Ref:     "#/definitions/" + t.Name(),
+		Ref:     "#/definitions/" + typeName,
 	}
 }
 
-func (r *Reflector) reflectStructFields(st *Type, definitions Definitions, t reflect.Type) {
+func (r *Reflector) reflectStructFields(st *Type, definitions Definitions, typeName string, t reflect.Type) {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -297,12 +303,17 @@ func (r *Reflector) reflectStructFields(st *Type, definitions Definitions, t ref
 		// current type should inherit properties of anonymous one
 		if name == "" {
 			if f.Anonymous && !exist {
-				r.reflectStructFields(st, definitions, f.Type)
+				r.reflectStructFields(st, definitions, typeName, f.Type)
 			}
 			continue
 		}
 
-		property := r.reflectTypeToSchema(definitions, f.Type)
+		fieldTypeName := f.Type.Name()
+		if len(fieldTypeName) <= 0 {
+			// f is an anonymous struct. Use typeName::<fieldName> as its typename
+			fieldTypeName = typeName + "::" + name
+		}
+		property := r.reflectTypeToSchema(definitions, fieldTypeName, f.Type)
 		property.structKeywordsFromTags(f)
 		st.Properties[name] = property
 		if required {
