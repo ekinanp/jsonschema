@@ -161,6 +161,12 @@ type protoEnum interface {
 var protoEnumType = reflect.TypeOf((*protoEnum)(nil)).Elem()
 
 func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type) *Type {
+	if t.Kind() == reflect.Ptr {
+		// t.Name() for reflect.Ptr is empty, so need to put this check
+		// before the definitions check.
+		return r.reflectTypeToSchema(definitions, t.Elem())
+	}
+
 	// Already added to definitions?
 	if _, ok := definitions[t.Name()]; ok {
 		return &Type{Ref: "#/definitions/" + t.Name()}
@@ -242,8 +248,6 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, t reflect.Type)
 	case reflect.String:
 		return &Type{Type: "string"}
 
-	case reflect.Ptr:
-		return r.reflectTypeToSchema(definitions, t.Elem())
 	}
 	panic("unsupported type " + t.String())
 }
