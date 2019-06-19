@@ -104,6 +104,8 @@ type Reflector struct {
 	// IgnoredTypes defines a slice of types that should be ignored in the schema,
 	// switching to just allowing additional properties instead.
 	IgnoredTypes []interface{}
+
+	TypeMappings map[reflect.Type]*Type
 }
 
 // Reflect reflects to Schema from a value.
@@ -145,9 +147,16 @@ type Definitions map[string]*Type
 // Available Go defined types for JSON Schema Validation.
 // RFC draft-wright-json-schema-validation-00, section 7.3
 var (
-	timeType = reflect.TypeOf(time.Time{}) // date-time RFC section 7.3.1
-	ipType   = reflect.TypeOf(net.IP{})    // ipv4 and ipv6 RFC section 7.3.4, 7.3.5
-	uriType  = reflect.TypeOf(url.URL{})   // uri RFC section 7.3.6
+	timeType    = reflect.TypeOf(time.Time{}) // date-time RFC section 7.3.1
+	TimeType    = &Type{Type: "string", Format: "date-time"}
+	ipType      = reflect.TypeOf(net.IP{}) // ipv4 and ipv6 RFC section 7.3.4, 7.3.5
+	IpType      = &Type{Type: "string", Format: "ipv4"}
+	uriType     = reflect.TypeOf(url.URL{}) // uri RFC section 7.3.6
+	UriType     = &Type{Type: "string", Format: "uri"}
+	IntegerType = &Type{Type: "integer"}
+	NumberType  = &Type{Type: "number"}
+	BoolType    = &Type{Type: "boolean"}
+	StringType  = &Type{Type: "string"}
 )
 
 // Byte slices will be encoded as base64
@@ -181,7 +190,7 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, typeName string
 	switch t {
 	case ipType:
 		// TODO differentiate ipv4 and ipv6 RFC section 7.3.4, 7.3.5
-		return &Type{Type: "string", Format: "ipv4"} // ipv4 RFC section 7.3.4
+		return IpType // ipv4 RFC section 7.3.4
 	}
 
 	switch t.Kind() {
@@ -189,10 +198,13 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, typeName string
 
 		switch t {
 		case timeType: // date-time RFC section 7.3.1
-			return &Type{Type: "string", Format: "date-time"}
+			return TimeType
 		case uriType: // uri RFC section 7.3.6
-			return &Type{Type: "string", Format: "uri"}
+			return UriType
 		default:
+			if alias, ok := r.TypeMappings[t]; ok {
+				return alias
+			}
 			return r.reflectStruct(definitions, typeName, t)
 		}
 
@@ -231,16 +243,16 @@ func (r *Reflector) reflectTypeToSchema(definitions Definitions, typeName string
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return &Type{Type: "integer"}
+		return IntegerType
 
 	case reflect.Float32, reflect.Float64:
-		return &Type{Type: "number"}
+		return NumberType
 
 	case reflect.Bool:
-		return &Type{Type: "boolean"}
+		return BoolType
 
 	case reflect.String:
-		return &Type{Type: "string"}
+		return StringType
 
 	case reflect.Ptr:
 		return r.reflectTypeToSchema(definitions, t.Elem().Name(), t.Elem())
